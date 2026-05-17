@@ -39,6 +39,9 @@ class Database:
             );
             CREATE INDEX IF NOT EXISTS idx_messages_user
                 ON messages(user_id, id DESC);
+            CREATE TABLE IF NOT EXISTS allowed_users (
+                user_id INTEGER PRIMARY KEY
+            );
         """)
         self._conn.commit()
 
@@ -137,3 +140,52 @@ class Database:
                 "SELECT COUNT(*) FROM messages WHERE user_id = ?", (user_id,)
             ).fetchone()
         return row[0] if row else 0
+
+    # ---- allowed users management ------------------------------------------
+
+    def is_user_allowed(self, user_id: int) -> bool:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM allowed_users WHERE user_id = ?", (user_id,)
+            ).fetchone()
+        return row is not None
+
+    def add_allowed_user(self, user_id: int) -> bool:
+        """Returns True if added, False if already existed."""
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "INSERT INTO allowed_users (user_id) VALUES (?)", (user_id,)
+                )
+                self._conn.commit()
+                return True
+            except sqlite3.IntegrityError:
+                return False
+
+    def remove_allowed_user(self, user_id: int) -> bool:
+        """Returns True if removed, False if not found."""
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM allowed_users WHERE user_id = ?", (user_id,)
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def list_allowed_users(self) -> list[int]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT user_id FROM allowed_users ORDER BY user_id"
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def seed_allowed_users(self, user_ids: frozenset[int]) -> None:
+        """Adds initial user IDs if the table is empty."""
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) FROM allowed_users").fetchone()
+            if row[0] > 0:
+                return
+            for uid in user_ids:
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO allowed_users (user_id) VALUES (?)", (uid,)
+                )
+            self._conn.commit()

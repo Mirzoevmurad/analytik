@@ -95,8 +95,13 @@ def _retry_keyboard() -> InlineKeyboardMarkup:
 # ---- helpers -----------------------------------------------------------
 
 def _is_allowed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    db: Database = context.bot_data["db"]
+    return db.is_user_allowed(user_id)
+
+
+def _is_admin(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     cfg: Config = context.bot_data["cfg"]
-    return user_id in cfg.allowed_user_ids
+    return user_id == cfg.admin_id
 
 
 async def _deny(update: Update) -> None:
@@ -229,7 +234,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ctx_info = f"\n\n💬 В контексте: {msg_count} сообщений" if msg_count > 0 else ""
 
     await update.effective_message.reply_text(
-        f"Привет, {user.first_name}! Я Analytik — твой ИИ-аналитик данных.\n\n"
+        f"Привет, {user.first_name}! Я твой ИИ Аналитик.\n\n"
         "Просто напиши или отправь голосовое сообщение — "
         "я отвечу как аналитик данных."
         + ctx_info,
@@ -243,7 +248,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _deny(update)
         return
     await update.effective_message.reply_text(
-        "📖 Analytik Bot — справка\n\n"
+        "📖 ИИ Аналитик — справка\n\n"
         "Как пользоваться:\n"
         "— Просто напишите текст или отправьте голосовое\n"
         "— Бот помнит контекст беседы\n"
@@ -342,7 +347,7 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     lines: list[str] = []
     for msg_data in history:
-        role = "Вы" if msg_data["role"] == "user" else "Analytik"
+        role = "Вы" if msg_data["role"] == "user" else "ИИ Аналитик"
         ts = msg_data["created_at"] or ""
         lines.append(f"[{ts}] {role}:\n{msg_data['content']}\n")
 
@@ -363,6 +368,99 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             )
     finally:
         export_path.unlink(missing_ok=True)
+
+
+async def cmd_adduser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if not _is_admin(context, user.id):
+        await update.effective_message.reply_text(
+            "Эта команда доступна только администратору.", parse_mode=None,
+        )
+        return
+    db: Database = context.bot_data["db"]
+    args_text = (context.args[0] if context.args else "").strip()
+    if not args_text:
+        await update.effective_message.reply_text(
+            "Использование: /adduser <telegram_id>", parse_mode=None,
+        )
+        return
+    try:
+        new_id = int(args_text)
+    except ValueError:
+        await update.effective_message.reply_text(
+            "❌ ID должен быть числом.", parse_mode=None,
+        )
+        return
+    if db.add_allowed_user(new_id):
+        await update.effective_message.reply_text(
+            f"✅ Пользователь {new_id} добавлен.", parse_mode=None,
+        )
+    else:
+        await update.effective_message.reply_text(
+            f"Пользователь {new_id} уже в списке.", parse_mode=None,
+        )
+
+
+async def cmd_removeuser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if not _is_admin(context, user.id):
+        await update.effective_message.reply_text(
+            "Эта команда доступна только администратору.", parse_mode=None,
+        )
+        return
+    db: Database = context.bot_data["db"]
+    cfg: Config = context.bot_data["cfg"]
+    args_text = (context.args[0] if context.args else "").strip()
+    if not args_text:
+        await update.effective_message.reply_text(
+            "Использование: /removeuser <telegram_id>", parse_mode=None,
+        )
+        return
+    try:
+        rm_id = int(args_text)
+    except ValueError:
+        await update.effective_message.reply_text(
+            "❌ ID должен быть числом.", parse_mode=None,
+        )
+        return
+    if rm_id == cfg.admin_id:
+        await update.effective_message.reply_text(
+            "❌ Нельзя удалить администратора.", parse_mode=None,
+        )
+        return
+    if db.remove_allowed_user(rm_id):
+        await update.effective_message.reply_text(
+            f"✅ Пользователь {rm_id} удалён.", parse_mode=None,
+        )
+    else:
+        await update.effective_message.reply_text(
+            f"Пользователь {rm_id} не найден в списке.", parse_mode=None,
+        )
+
+
+async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if not _is_admin(context, user.id):
+        await update.effective_message.reply_text(
+            "Эта команда доступна только администратору.", parse_mode=None,
+        )
+        return
+    db: Database = context.bot_data["db"]
+    cfg: Config = context.bot_data["cfg"]
+    users_list = db.list_allowed_users()
+    if not users_list:
+        await update.effective_message.reply_text(
+            "Список пользователей пуст.", parse_mode=None,
+        )
+        return
+    lines = []
+    for uid in users_list:
+        marker = " (админ)" if uid == cfg.admin_id else ""
+        lines.append(f"  {uid}{marker}")
+    await update.effective_message.reply_text(
+        f"👥 Пользователи ({len(users_list)}):\n" + "\n".join(lines),
+        parse_mode=None,
+    )
 
 
 async def cmd_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -446,7 +544,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             return
         lines: list[str] = []
         for msg_data in history:
-            role = "Вы" if msg_data["role"] == "user" else "Analytik"
+            role = "Вы" if msg_data["role"] == "user" else "ИИ Аналитик"
             ts = msg_data["created_at"] or ""
             lines.append(f"[{ts}] {role}:\n{msg_data['content']}\n")
         export_text = "\n".join(lines)
@@ -467,18 +565,18 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     elif data == "menu_help":
         await query.message.reply_text(
-            "📖 Analytik Bot — справка\n\n"
-            "Как пользоваться:\n"
-            "— Просто напишите текст или отправьте голосовое\n"
-            "— Бот помнит контекст беседы\n"
-            "— Спрашивайте про SQL, Python, данные, статистику\n\n"
-            "Команды:\n"
-            "/start — приветствие и меню\n"
-            "/clear — очистить контекст\n"
-            "/system — показать / сменить промпт\n"
-            "/export — экспорт истории чата\n"
-            "/voice — вкл/выкл голосовые ответы\n"
-            "/help — эта справка",
+                "📖 ИИ Аналитик — справка\n\n"
+                "Как пользоваться:\n"
+                "— Просто напишите текст или отправьте голосовое\n"
+                "— Бот помнит контекст беседы\n"
+                "— Спрашивайте про SQL, Python, данные, статистику\n\n"
+                "Команды:\n"
+                "/start — приветствие и меню\n"
+                "/clear — очистить контекст\n"
+                "/system — показать / сменить промпт\n"
+                "/export — экспорт истории чата\n"
+                "/voice — вкл/выкл голосовые ответы\n"
+                "/help — эта справка",
             parse_mode=None,
         )
 
@@ -692,12 +790,17 @@ def build_app() -> Application:
     app.bot_data["llm"] = llm
     app.bot_data["rate_limiter"] = RateLimiter(max_requests=10, window_seconds=60)
 
+    db.seed_allowed_users(cfg.allowed_user_ids)
+
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("clear", cmd_clear))
     app.add_handler(CommandHandler("system", cmd_system))
     app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CommandHandler("voice", cmd_voice))
+    app.add_handler(CommandHandler("adduser", cmd_adduser))
+    app.add_handler(CommandHandler("removeuser", cmd_removeuser))
+    app.add_handler(CommandHandler("users", cmd_users))
 
     app.add_handler(CallbackQueryHandler(on_callback))
 
@@ -720,7 +823,7 @@ def main() -> None:
     app = build_app()
     cfg: Config = app.bot_data["cfg"]
     logger.info(
-        "Analytik-bot запущен. STT=%s, LLM=%s, пользователей: %d",
+        "ИИ Аналитик запущен. STT=%s, LLM=%s, пользователей: %d",
         cfg.stt_model, cfg.llm_model, len(cfg.allowed_user_ids),
     )
 

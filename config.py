@@ -11,6 +11,7 @@ class Config:
     bot_token: str
     groq_api_key: str
     allowed_user_ids: frozenset[int]
+    admin_id: int
     db_path: Path
     stt_model: str
     llm_model: str
@@ -40,10 +41,13 @@ class Config:
         if not ids:
             raise RuntimeError("ALLOWED_USER_IDS должен содержать хотя бы один id")
 
+        admin_id = next(iter(ids))
+
         return cls(
             bot_token=token,
             groq_api_key=groq_key,
             allowed_user_ids=frozenset(ids),
+            admin_id=admin_id,
             db_path=Path(os.getenv("DB_PATH", "data/analytik.sqlite")),
             stt_model=os.getenv("STT_MODEL", "whisper-large-v3-turbo"),
             llm_model=os.getenv("LLM_MODEL", "llama-3.3-70b-versatile"),
