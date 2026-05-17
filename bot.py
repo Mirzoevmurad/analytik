@@ -86,9 +86,9 @@ def _confirm_clear_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-def _retry_keyboard(question: str) -> InlineKeyboardMarkup:
+def _retry_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 Повторить", callback_data=f"retry:{question[:200]}")],
+        [InlineKeyboardButton("🔄 Повторить", callback_data="retry")],
     ])
 
 
@@ -482,13 +482,15 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             parse_mode=None,
         )
 
-    elif data.startswith("retry:"):
-        question = data[6:]
+    elif data == "retry":
+        question = context.user_data.get("last_question", "")
         if question:
             await _process_chat(
                 update, context, question=question, source="retry",
                 target_message=query.message,
             )
+        else:
+            await query.message.reply_text("Нет вопроса для повтора.", parse_mode=None)
 
 
 # ---- message handlers --------------------------------------------------
@@ -606,13 +608,15 @@ async def _process_chat(
             target_message = await msg.reply_text("⏳ Думаю...", parse_mode=None)
     await context.bot.send_chat_action(chat_id=msg.chat_id, action=ChatAction.TYPING)
 
+    context.user_data["last_question"] = question
+
     try:
         answer = await llm.chat(question, system_prompt, context=chat_context)
     except LLMError as e:
         await target_message.edit_text(
             f"❌ Не смог ответить: {e}",
             parse_mode=None,
-            reply_markup=_retry_keyboard(question),
+            reply_markup=_retry_keyboard(),
         )
         return
     except Exception as e:  # noqa: BLE001
@@ -620,7 +624,7 @@ async def _process_chat(
         await target_message.edit_text(
             f"❌ Ошибка ИИ ({type(e).__name__}). Попробуйте ещё раз.",
             parse_mode=None,
-            reply_markup=_retry_keyboard(question),
+            reply_markup=_retry_keyboard(),
         )
         return
 
