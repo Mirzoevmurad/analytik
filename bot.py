@@ -108,10 +108,10 @@ async def _tts_reply(msg, text: str) -> None:
         return
 
     # определяем язык: если есть кириллица — ru, иначе en
-    lang = "ru"
+    lang = "en"
     for ch in text[:200]:
-        if "a" <= ch.lower() <= "z":
-            lang = "en"
+        if "\u0400" <= ch <= "\u04FF":
+            lang = "ru"
             break
 
     # ограничиваем длину текста для TTS (gTTS имеет лимиты)
