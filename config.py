@@ -41,7 +41,11 @@ class Config:
         if not ids:
             raise RuntimeError("ALLOWED_USER_IDS должен содержать хотя бы один id")
 
-        admin_id = next(iter(ids))
+        raw_admin = os.getenv("ADMIN_ID", "").strip()
+        if raw_admin:
+            admin_id = int(raw_admin)
+        else:
+            admin_id = min(ids)
 
         return cls(
             bot_token=token,
